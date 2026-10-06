@@ -42,6 +42,25 @@ function testSymmetricWithFractionalOffsets(tc)
         notchRejectH(32, 40, 'gaussian', [5.4 -7.7 2; 0 9.3 2])));
 end
 
+function testEvenSizeButterworthStaysSymmetric(tc)
+    % Regression: with plain (non-periodic) distances, the long Butterworth
+    % tail made H asymmetric on even sizes and applyFilter warned (2e-5).
+    for sz = [128 128; 558 640; 427 640]'
+        H = notchRejectH(sz(1), sz(2), 'butterworth', [15.21 -35.98 5; 0 38.26 5], 2);
+        verifyWarningFree(tc, @() applyFilter(rand(sz(1), sz(2)), H), mat2str(sz'));
+    end
+end
+
+function testPeriodicDistanceMatchesPlainAwayFromEdges(tc)
+    % Inside the grid the periodic distance equals the plain one, so a notch
+    % far from the edges is the same as building it from freqDistance.
+    M = 64; N = 80; D0 = 3;
+    D = freqDistance(M, N, 5, -7);
+    Dm = freqDistance(M, N, -5, 7);
+    plain = (1 - exp(-D.^2 / (2 * D0^2))) .* (1 - exp(-Dm.^2 / (2 * D0^2)));
+    verifyEqual(tc, notchRejectH(M, N, 'gaussian', [5 -7 D0]), plain, 'AbsTol', 1e-12);
+end
+
 function testRemovesAPlantedSinusoid(tc)
     % 0.5 + 0.2 cos at frequency (6, 9) samples; an ideal radius-1 notch there
     % leaves exactly the constant 0.5.

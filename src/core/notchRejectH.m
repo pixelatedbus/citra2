@@ -17,6 +17,14 @@ function H = notchRejectH(M, N, type, notches, n)
 %   (the same shapes as lowpassH / highpassH). Offsets may be fractional,
 %   so a notch can sit exactly on a spike that falls between samples.
 %
+%   Distances to a notch are measured PERIODICALLY (wrapping around the
+%   spectrum edges, offsets taken in [-M/2, M/2) and [-N/2, N/2)), because
+%   the DFT spectrum is periodic. This keeps H exactly symmetric for even
+%   sizes too: with plain distances, the first row/column of an even-sized
+%   spectrum has no mirror partner inside the grid, and the long tail of a
+%   Butterworth notch made H slightly asymmetric there (imaginary residue up
+%   to 2e-5 of the result, flagged by applyFilter's warning).
+%
 %   INPUT
 %     M        number of rows of the spectrum (positive integer)
 %     N        number of columns of the spectrum (positive integer)
@@ -41,14 +49,24 @@ if any(notches(:, 3) <= 0)
     error('notchRejectH:badRadius', 'Every notch radius D0 must be > 0.');
 end
 
+[V, U] = meshgrid(1:N, 1:M);              % U = row index, V = column index
+uc = floor(M/2) + 1;
+vc = floor(N/2) + 1;
+
 H = ones(M, N);
 for k = 1:size(notches, 1)
     du = notches(k, 1);
     dv = notches(k, 2);
     D0 = notches(k, 3);
-    H = H .* holeAt(freqDistance(M, N, du, dv), type, D0, n) ...
-          .* holeAt(freqDistance(M, N, -du, -dv), type, D0, n);
+    Dplus  = hypot(wrap(U - uc - du, M), wrap(V - vc - dv, N));
+    Dminus = hypot(wrap(U - uc + du, M), wrap(V - vc + dv, N));
+    H = H .* holeAt(Dplus, type, D0, n) .* holeAt(Dminus, type, D0, n);
 end
+end
+
+function d = wrap(d, P)
+% Periodic offset: map d into [-P/2, P/2) (the spectrum repeats every P samples).
+d = mod(d + P/2, P) - P/2;
 end
 
 function Hhp = holeAt(D, type, D0, n)
