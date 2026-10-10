@@ -12,12 +12,12 @@ Citra keabuan dan berwarna didukung di semua bagian.
 | E | Restorasi derau periodik: *notch reject*, *bandreject* |
 | F | Restorasi *motion blur*: PSF sendiri, *inverse filtering*, Wiener filtering |
 
-## Anggota
+## Anggota (Kelompok 4)
 
 | Nama | NIM |
 |---|---|
-| [Nama 1] | [NIM 1] |
-| [Nama 2] | [NIM 2] |
+| David Bakti Lodianto | 13523083 |
+| Lutfi Hakim Yusra | 13523084 |
 
 ## Kebutuhan
 
