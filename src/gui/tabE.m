@@ -16,7 +16,7 @@ place(uilabel(C, 'Text', 'n (Butterworth)'), 3, 1);
 place(uilabel(C, 'Text', 'Ring D0 (band)'), 4, 1);
 place(uilabel(C, 'Text', 'Ring W (band)'), 5, 1);
 notchTable = place(uitable(C, 'Data', zeros(0, 3), 'ColumnName', {'du (rows)', 'dv (cols)', 'radius'}, ...
-    'ColumnEditable', true, 'RowName', {}), 6, [1 2]);
+    'ColumnEditable', true, 'ColumnWidth', {85, 85, 70}, 'ColumnFormat', {'shortG', 'shortG', 'shortG'}, 'RowName', {}), 6, [1 2]);
 C.RowHeight{6} = 150;
 addButton = place(uibutton(C, 'Text', 'Add notch'), 7, 1);
 removeButton = place(uibutton(C, 'Text', 'Remove selected'), 7, 2);
