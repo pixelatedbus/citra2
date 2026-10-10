@@ -1,51 +1,20 @@
 function tabF(app)
-% TABF  Builds the part F tab (motion blur restoration) inside app.Tabs.F.
-%
-%   Restores a motion-blurred image with our own degradation model: the
-%   PSF of a straight motion of length L at angle theta (motionPSF), its
-%   transfer function H(u,v) (psf2H), and two restorations side by side
-%   (motionRestore):
-%     - inverse filtering G ./ H, stabilised by a threshold t (terms with
-%       |H| < t are dropped), a Butterworth radius R0, or none;
-%     - Wiener filtering conj(H) ./ (|H|^2 + K) .* G.
-%   Border: periodic (no treatment), edge taper (default) or mirror.
-%   L and theta are filled in from the file name when it contains
-%   "_L<n>_A<n>" (the official F images do) and can be changed.
-%   "Simulate" first blurs the loaded image with the same PSF and adds
-%   Gaussian noise of std sigma (motionDegrade), to try the restoration
-%   on a clean image whose original is known.
-%   Shows the original (reference, or the loaded image when simulating),
-%   the degraded image, the PSF, |H|, the degraded spectrum, both results
-%   and the Wiener result's spectrum, plus the parameters and, when an
-%   original is known, the PSNR of the degraded image and of both results.
-%   Save result writes both results, clipped to [0,1], as PNG files.
-%
-%   INPUT
-%     app  the FreqApp object (reads app.Image, app.ImagePath, app.Tabs.F,
-%          app.Fig; listens to app's ImageChanged event)
-%
-%   OUTPUT
-%     none (fills app.Tabs.F)
-
-L = buildPartLayout(app.Tabs.F, ...
-    {'Original (reference)', 'Degraded', 'PSF', '|H(u,v)|', ...
-     'Degraded spectrum', 'Inverse filter', 'Wiener filter', 'Wiener result spectrum'});
+% Tab F: motion blur restoration with our own PSF, inverse filtering and Wiener filtering side by side.
+L = buildPartLayout(app.Tabs.F, {'Original (reference)', 'Degraded', 'PSF', '|H(u,v)|', ...
+    'Degraded spectrum', 'Inverse filter', 'Wiener filter', 'Wiener result spectrum'});
 C = L.Controls;
 
-lengthField = place(uieditfield(C, 'numeric', 'Value', 15, 'Limits', [1 Inf]), 1, 2);
-angleField = place(uieditfield(C, 'numeric', 'Value', 0, 'Limits', [-Inf Inf]), 2, 2);
-modeField = place(uidropdown(C, ...
-    'Items', {'Threshold t', 'Radius R0 (Butterworth)', 'None (plain 1/H)'}, ...
+lengthField = place(uieditfield(C, 'numeric', 'Value', 15, 'Limits', [1 200]), 1, 2);
+angleField = place(uieditfield(C, 'numeric', 'Value', 0, 'Limits', [-360 360]), 2, 2);
+modeField = place(uidropdown(C, 'Items', {'Threshold t', 'Radius R0 (Butterworth)', 'None (plain 1/H)'}, ...
     'ItemsData', {'threshold', 'radius', 'none'}, 'Value', 'threshold'), 3, 2);
 tField = place(uieditfield(C, 'numeric', 'Value', 0.1, 'Limits', [0 Inf]), 4, 2);
-r0Field = place(uieditfield(C, 'numeric', 'Value', 20, ...
-    'Limits', [0 Inf], 'LowerLimitInclusive', 'off'), 5, 2);
+r0Field = place(uieditfield(C, 'numeric', 'Value', 20, 'Limits', [0 Inf], 'LowerLimitInclusive', 'off'), 5, 2);
 kField = place(uieditfield(C, 'numeric', 'Value', 0.003, 'Limits', [0 Inf]), 6, 2);
 borderField = place(uidropdown(C, 'Items', {'Edge taper', 'Periodic (none)', 'Mirror'}, ...
     'ItemsData', {'taper', 'periodic', 'mirror'}, 'Value', 'taper'), 7, 2);
-simulateBox = place(uicheckbox(C, 'Text', 'Simulate: blur the loaded image first', ...
-    'Value', false), 8, [1 2]);
-sigmaField = place(uieditfield(C, 'numeric', 'Value', 0, 'Limits', [0 Inf]), 9, 2);
+simulateBox = place(uicheckbox(C, 'Text', 'Simulate: blur the loaded image first', 'Value', false), 8, [1 2]);
+sigmaField = place(uieditfield(C, 'numeric', 'Value', 0, 'Limits', [0 1]), 9, 2);
 place(uilabel(C, 'Text', 'Length L (pixels)'), 1, 1);
 place(uilabel(C, 'Text', 'Angle theta (deg)'), 2, 1);
 place(uilabel(C, 'Text', 'Inverse: stabilise'), 3, 1);
@@ -54,23 +23,21 @@ place(uilabel(C, 'Text', 'Inverse: R0'), 5, 1);
 place(uilabel(C, 'Text', 'Wiener K'), 6, 1);
 place(uilabel(C, 'Text', 'Border'), 7, 1);
 place(uilabel(C, 'Text', 'Simulated noise sigma'), 9, 1);
-place(uilabel(C, 'WordWrap', 'on', 'Text', ['Angle: from the +x axis towards +y ' ...
-    '(rows point down), so positive is clockwise on screen, as in the test data.']), 10, [1 2]);
+place(uilabel(C, 'WordWrap', 'on', 'Text', ['Angle: from the +x axis towards +y (rows point down), ' ...
+    'so positive is clockwise on screen, as in the test data.']), 10, [1 2]);
 
 modeField.ValueChangedFcn = @(~, ~) updateEnabled();
 simulateBox.ValueChangedFcn = @(~, ~) updateEnabled();
 L.Apply.ButtonPushedFcn = @(~, ~) apply();
 L.Save.ButtonPushedFcn = @(~, ~) saveResult();
 
-results = {};       % {inverse, wiener} from the last Apply
-resultNames = {};   % suggested file names for Save
-
+results = {};
+resultNames = {};
 addlistener(app, 'ImageChanged', @(~, ~) showInput());
 updateEnabled();
 showInput();
 
     function c = place(c, row, col)
-        % Put a component at an explicit cell of the Parameters grid.
         c.Layout.Row = row;
         c.Layout.Column = col;
     end
@@ -82,7 +49,6 @@ showInput();
     end
 
     function showInput()
-        % New image: fill L and theta from the name, draw it, clear results.
         results = {};
         for k = [1 3 4 6 7 8]
             showImage(L.Axes(k), [], L.Axes(k).Title.String);
@@ -107,7 +73,6 @@ showInput();
     end
 
     function ref = reference()
-        % The reference image of the loaded file, [] if none or size differs.
         ref = [];
         refPath = findReference(fileparts(fileparts(app.ImagePath)), app.ImagePath);
         if ~isempty(refPath)
@@ -169,11 +134,11 @@ showInput();
             label = sprintf('%s; simulated noise sigma = %g', label, sigmaField.Value);
         end
         if ~isempty(original)
-            [~, pg] = imageQuality(g, original);
-            [~, pInv] = imageQuality(fInverse, original);
-            [~, pw] = imageQuality(fWiener, original);
+            [~, pDegraded] = imageQuality(g, original);
+            [~, pInverse] = imageQuality(fInverse, original);
+            [~, pWiener] = imageQuality(fWiener, original);
             label = sprintf('%s  |  PSNR vs original: degraded %.2f, inverse %.2f, Wiener %.2f dB', ...
-                label, pg, pInv, pw);
+                label, pDegraded, pInverse, pWiener);
         end
         L.Params.Text = ['Parameters: ' label];
 
@@ -189,11 +154,10 @@ showInput();
         end
         folder = uigetdir('', 'Folder for the inverse and Wiener results');
         figure(app.Fig);
-        if isequal(folder, 0)
-            return;
-        end
-        for k = 1:2
-            imwrite(min(max(results{k}, 0), 1), fullfile(folder, resultNames{k}));
+        if ~isequal(folder, 0)
+            for k = 1:2
+                imwrite(min(max(results{k}, 0), 1), fullfile(folder, resultNames{k}));
+            end
         end
     end
 end
