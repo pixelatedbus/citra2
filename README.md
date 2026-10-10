@@ -7,7 +7,7 @@ IF4073 Pemrosesan Citra Digital (ITB, Semester I 2026/2027). It covers:
 |---|---|---|
 | B | Smoothing / blurring | Ideal, Gaussian and Butterworth low-pass filters (ILPF, GLPF, BLPF) |
 | C | High-pass filtering | Ideal, Gaussian and Butterworth high-pass filters (IHPF, GHPF, BHPF) |
-| D | Brightness increase | TODO: method |
+| D | Brightness increase | Homomorphic filter on the log spectrum (main), low-frequency emphasis (comparison) |
 | E | Periodic noise restoration | Bandreject (ideal, Butterworth, Gaussian) and notch reject filters |
 | F | Motion blur restoration | Own motion PSF / H(u,v), inverse filtering, Wiener filtering |
 
@@ -92,10 +92,79 @@ TODO
 TODO
 
 ### D. Brightness increase
-TODO
+Brightness lives in the lowest frequencies: the DC term is `M·N` times the mean intensity. Our spectrum analysis
+of the inputs showed that each dark image is a power law of its reference, `dark = c · ref^γ` (γ = 1.17–1.41,
+c = 0.30–0.36), the same over the whole image and in every RGB channel. A pure gain cannot undo that, because
+the contrast is compressed as well. In the log domain the power law becomes linear, so the main method works on
+the spectrum of `log(image)`:
+
+- **Homomorphic (`homomorphicBrightness`, main):** `Z = FFT(log(f + 1/255))`, multiply by
+  `H = gH + (gL − gH)·exp(−D²/2D0²)` (`brightnessH`), set the DC term so that the geometric mean of the result
+  becomes the target `t`, then `exp(IFFT(·))`. `gL` and `gH` set the gains of the low and high frequencies of
+  the log image (`gL = gH = 1/γ` undoes the power law). `D0 = 0` gives `gL` to the DC term only.
+- **Low-frequency emphasis (comparison):** `G = H·F` on the image itself with `H = brightnessH(k, 1, D0)`:
+  the mean and slow changes times `k`, the detail unchanged. With `D0 = 0` only the mean is raised.
+- **Colour:** every RGB channel gets the same H and the same DC shift, so the channels keep their relation (HSV V
+  only scored lower: ihc 33.2 vs 39.8 dB, because the darkening was applied per channel).
+- **GUI (tab D):** method, `t`, `gL`, `gH`, `k` and `D0`. The parameter line shows the mean brightness before and
+  after, and the PSNR against the reference when there is one.
+- **Batch (`run_partD`):** homomorphic sweep of `g = gL = gH` × `t`, the same with separate `gL`, `gH` and
+  `D0` > 0, and emphasis `k` × `D0`. One figure per image.
+
+| image | input | DC gain only | emphasis (best) | homomorphic (best) |
+|---|---|---|---|---|
+| cell (grey) | 12.86 | 23.03 | 28.39 | **40.93** (g = 0.8, t = 0.25) |
+| coins (grey) | 10.61 | 17.33 | 28.23 | **46.93** (g = 0.85, t = 0.325) |
+| ihc (colour) | 6.36 | 16.80 | 22.95 | **39.83** (g = 0.8, t = 0.6) |
+| retina (colour) | 10.02 | 16.04 | 28.63 | **37.67** (g = 0.85, t = 0.2) |
+
+PSNR in dB against the reference. Raising only the DC term makes the image brighter but leaves it flat and grey.
+The best homomorphic settings use the same gain at every frequency (`D0 = 0`). Separate low and high gains do
+not help here, because the darkening is the same everywhere in the image. The target `t` is the brightness the
+user wants. Without a reference, the default `t = 0.4` still brightens every image, but the score is lower because
+each reference has its own brightness.
 
 ### E. Periodic noise restoration
 TODO
 
 ### F. Motion blur restoration
-TODO
+Degradation model `G = H·F + N`. `motionPSF(L, θ)` builds the PSF of a straight motion: a segment of length
+`L − 1` with equal weight, rasterised with bilinear weights and normalised to sum 1. `psf2H` places it in an
+`M × N` array with its centre at (1,1) and takes the FFT, so the restored image is not shifted.
+
+- **Angle convention:** `θ` turns from the +x axis towards +y with rows pointing down, so a positive angle is
+  clockwise on screen. We found this by blurring each reference and comparing with the input; `fspecial('motion')`
+  uses the opposite sign. Our PSF reproduces the inputs to within the 8-bit rounding error (residual rms
+  0.0012–0.0023, against 0.0021–0.0052 for `fspecial` at `−θ`).
+- **Inverse filter (`inverseRestore`):** `F̂ = G / H`, stabilised by a threshold (terms with `|H| < t` are set to 0,
+  the default) or a Butterworth radius `R0`. A motion blur H is zero along lines about `M/L` samples apart, so a
+  radius limit is only stable below the first zero and never beat the input here.
+- **Wiener filter (`wienerRestore`):** `F̂ = conj(H) / (|H|² + K) · G`, with `K` set in the GUI.
+- **Borders (`motionRestore`):** the data was blurred with mirrored borders, not wrapped ones, so a plain
+  (periodic) restoration rings at the edges. Options: `periodic`, `taper` (near the edges, blend the image into
+  its own circular blur; the GUI default) and `mirror` (restore the mirrored 2M × 2N image; exact only for θ = 0°
+  or 90°).
+- **GUI (tab F):** `L` and `θ` are read from the file name and can be changed. Other controls: inverse mode with
+  `t` or `R0`, Wiener `K`, border, and an optional "simulate" mode that blurs the loaded image first and adds noise
+  with std `σ`. The tab shows the original, the degraded image, the PSF, `|H|`, the degraded spectrum, both
+  results and the Wiener result's spectrum.
+- **Batch (`run_partF`):** every input with the inverse `t` and `R0` sweeps and the Wiener `K` sweep, each with
+  the three border options. It also runs the built-in `deconvwnr` as a separately labelled comparison.
+
+| image | input | inverse (best) | Wiener (best) |
+|---|---|---|---|
+| astronaut L19 A20 | 20.99 | 26.30 (t = 0.05, taper) | **27.69** (K = 0.001, taper) |
+| astronaut + noise | 20.61 | 22.43 (t = 0.15, mirror) | **22.75** (K = 0.03, mirror) |
+| brick L17 A0 | 22.09 | 30.76 (t = 0.02, mirror) | **31.53** (K = 0.001, mirror) |
+| coins L23 A35 | 20.35 | 25.46 (t = 0.02, taper) | **27.04** (K = 0.001, taper) |
+| retina L15 A−25 | 31.54 | 37.49 (t = 0.05, periodic) | **38.10** (K = 0.003, periodic) |
+| retina + noise | 28.64 | **31.22** (t = 0.4, periodic) | 27.42 (K = 0.05, periodic) |
+
+- **Noise changes the best parameters:** without noise a small `t` or `K` works, but with noise the same settings
+  amplify it enormously (retina + noise: 9.5 dB at `t = 0.02`). Both filters then need a much larger `t` or `K`,
+  which also gives up detail.
+- **Wiener with a constant K lowers the mean:** its gain at DC is `1/(1 + K)`. On the noisy retina, `K = 0.1` takes
+  the mean from 0.352 to 0.319, and correcting only the DC raises the score from 25.5 to 30.8 dB. The smooth retina
+  also suits the threshold inverse, which acts as a strong low-pass at `t = 0.4`.
+- **Built-in check:** with the same PSF and `K`, `deconvwnr` gives the same PSNR as our periodic Wiener filter. With
+  the `fspecial` PSF it scores up to 1.4 dB lower (retina 36.70 vs 38.10).
