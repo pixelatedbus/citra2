@@ -1,32 +1,5 @@
 function rows = run_partE(dataDir, outDir)
-% RUN_PARTE  Batch run of part E (periodic noise restoration) over every input image.
-%
-%   The noise spike positions come from the spectrum analysis of each
-%   official input (our spectrum analysis, summarised in knownSpikes below): spikes
-%   found in |F_noisy| and confirmed with F_noisy - F_ref. For each image:
-%     - a sweep of notch reject filters over the shape (ideal, gaussian,
-%       butterworth n = 2) and the notch radius (1, 2, 3, 5): one CSV row
-%       each, so the report can justify the chosen parameters with PSNR;
-%     - extra comparisons where they teach something (the spec asks for at
-%       least one image with two filters or parameter sets compared):
-%         brick:  notch radius 1 vs 5 vs 8 (too small, best, too large)
-%         hubble: fundamental only vs with its 2nd and 3rd harmonics
-%         rocket: notch vs bandreject rings (ideal, butterworth, gaussian)
-%   Figures, in outDir:
-%     <input>_E.png          the 5 required views for the main filter
-%                            (degraded, spectrum before, mask, spectrum
-%                            after, restored) plus the reference
-%     <input>_E_compare.png  restored image and mask of each compared filter
-%   Inputs that are not one of the four official images get only the
-%   baseline row "input" (their spikes have not been analysed).
-%
-%   INPUT
-%     dataDir  part folder holding input/ and reference/ (text)
-%     outDir   folder for the figures (text, must exist)
-%
-%   OUTPUT
-%     rows     table in the resultRow format
-
+% Part E batch: notch shape x radius sweep at the analysed spike positions, plus brick/hubble/rocket comparisons.
 shapes = {'ideal', 'gaussian', 'butterworth'};
 radii = [1 2 3 5 8];
 n = 2;
@@ -34,109 +7,69 @@ n = 2;
 rows = resultRow();
 files = dir(fullfile(dataDir, 'input', '*.png'));
 for k = 1:numel(files)
-    inPath = fullfile(files(k).folder, files(k).name);
     name = files(k).name;
+    inPath = fullfile(files(k).folder, name);
     f = readImageFile(inPath);
-    [M, N, ~] = size(f);
-
     [mse, psnr] = scoreAgainstReference(f, dataDir, inPath);
-    rows = [rows; resultRow('E', name, 'input', '', mse, psnr)]; %#ok<AGROW>
+    rows = [rows; resultRow('E', name, 'input', '', mse, psnr)];
 
     spec = knownSpikes(name);
     if isempty(spec)
         fprintf('  %s: no analysed spike positions, baseline row only\n', name);
         continue;
     end
-
-    % Sweep: shape x radius, all spikes of this image
     for s = 1:numel(shapes)
         for r = radii
-            cfg = notchConfig(spec.spikes, shapes{s}, r, n, '');
-            rows = [rows; scoreConfig(f, cfg, dataDir, inPath, name)]; %#ok<AGROW>
+            rows = [rows; scoreConfig(f, notchConfig(spec.spikes, shapes{s}, r, n, ''), dataDir, inPath, name)];
         end
     end
 
-    % Main filter: 5 required views
     main = notchConfig(spec.spikes, 'gaussian', spec.radius, n, '');
     saveMainFigure(f, main, dataDir, inPath, fullfile(outDir, [erase(name, '.png') '_E.png']));
 
-    % Extra comparisons (rows for the ones the sweep does not already cover)
-    compare = comparisonConfigs(spec, n, M, N);
+    compare = comparisonConfigs(spec, n);
     for c = 1:numel(compare)
         if compare(c).extraRow
-            rows = [rows; scoreConfig(f, compare(c), dataDir, inPath, name)]; %#ok<AGROW>
+            rows = [rows; scoreConfig(f, compare(c), dataDir, inPath, name)];
         end
     end
     if ~isempty(compare)
-        saveCompareFigure(f, compare, dataDir, inPath, ...
-            fullfile(outDir, [erase(name, '.png') '_E_compare.png']));
+        saveCompareFigure(f, compare, dataDir, inPath, fullfile(outDir, [erase(name, '.png') '_E_compare.png']));
     end
 end
 end
 
-% ---------------------------------------------------------------------------
 function spec = knownSpikes(fileName)
-% Spike positions (du, dv) per official input, from the E0 spectrum analysis.
-% Only one spike of each mirror pair is listed; notchRejectH adds the mirror.
-%   brick:  one oblique sinusoid between samples, centroid (15.21, -35.98),
-%           period 13.1 px; energy leaks to neighbours -> radius 5
-%   grass:  one oblique sinusoid between samples, centroid (20.43, 25.72),
-%           period 15.6 px -> radius 5
-%   hubble: vertical stripes clipped at 0 on the dark sky -> fundamental
-%           (0, 38.26) plus harmonics (0, 76.5) and (0, 114.8) -> radius 5
-%   rocket: horizontal stripes exactly on a sample, (32, 0), 99.2 % of the
-%           noise energy in this pair, on-grid -> radius 1
-% Radius: the E0 energy table (a larger radius catches more leaked noise
-% energy at a tiny cost in image energy) and the PSNR sweep here agree: the
-% Gaussian notch peaks at r = 5 for the off-grid spikes (r = 8 is worse) and
-% at r = 1 for the on-grid rocket spike.
-table = struct( ...
-    'prefix', {'brick_gray', 'grass_gray', 'hubble_color', 'rocket_color'}, ...
+known = struct('prefix', {'brick_gray', 'grass_gray', 'hubble_color', 'rocket_color'}, ...
     'spikes', {[15.21 -35.98], [20.43 25.72], [0 38.26; 0 76.5; 0 114.8], [32 0]}, ...
     'radius', {5, 5, 5, 1});
 spec = [];
-for t = table
-    if startsWith(fileName, [t.prefix '_'])
-        spec = t;
+for s = known
+    if startsWith(fileName, [s.prefix '_'])
+        spec = s;
     end
 end
 end
 
 function cfg = notchConfig(spikes, shape, r, n, suffix)
-% A notch reject configuration: every spike gets radius r.
-cfg.filter = 'notch';
-cfg.shape = shape;
-cfg.notches = [spikes, r * ones(size(spikes, 1), 1)];
-cfg.n = n;
-cfg.D0 = NaN;
-cfg.W = NaN;
-cfg.method = ['notch-' shape suffix];
 spots = arrayfun(@(k) sprintf('(%g,%g)', spikes(k, :)), 1:size(spikes, 1), 'UniformOutput', false);
-cfg.params = sprintf('notches=%s; r=%g', strjoin(spots, ''), r);
+cfg = struct('filter', 'notch', 'shape', shape, 'notches', [spikes, r * ones(size(spikes, 1), 1)], ...
+    'n', n, 'D0', NaN, 'W', NaN, 'method', ['notch-' shape suffix], ...
+    'params', sprintf('notches=%s; r=%g', strjoin(spots, ''), r), 'extraRow', false);
 if strcmp(shape, 'butterworth')
     cfg.params = sprintf('%s; n=%d', cfg.params, n);
 end
-cfg.extraRow = false;
 end
 
 function cfg = bandConfig(shape, D0, W, n)
-% A bandreject ring configuration.
-cfg.filter = 'band';
-cfg.shape = shape;
-cfg.notches = zeros(0, 3);
-cfg.n = n;
-cfg.D0 = D0;
-cfg.W = W;
-cfg.method = ['band-' shape];
-cfg.params = sprintf('D0=%g; W=%g', D0, W);
+cfg = struct('filter', 'band', 'shape', shape, 'notches', zeros(0, 3), 'n', n, 'D0', D0, 'W', W, ...
+    'method', ['band-' shape], 'params', sprintf('D0=%g; W=%g', D0, W), 'extraRow', true);
 if strcmp(shape, 'butterworth')
     cfg.params = sprintf('%s; n=%d', cfg.params, n);
 end
-cfg.extraRow = true;
 end
 
-function list = comparisonConfigs(spec, n, ~, ~)
-% The filters compared in <input>_E_compare.png, per image.
+function list = comparisonConfigs(spec, n)
 switch spec.prefix
     case 'brick_gray'
         list = [notchConfig(spec.spikes, 'gaussian', 1, n, '')
@@ -168,13 +101,11 @@ end
 end
 
 function row = scoreConfig(f, cfg, dataDir, inPath, name)
-g = runConfig(f, cfg);
-[mse, psnr] = scoreAgainstReference(g, dataDir, inPath);
+[mse, psnr] = scoreAgainstReference(runConfig(f, cfg), dataDir, inPath);
 row = resultRow('E', name, cfg.method, cfg.params, mse, psnr);
 end
 
 function saveMainFigure(f, cfg, dataDir, inPath, outFile)
-% Degraded, spectrum before, mask, spectrum after, restored, reference.
 [g, H, G, F] = runConfig(f, cfg);
 [~, before] = scoreAgainstReference(f, dataDir, inPath);
 [~, after] = scoreAgainstReference(g, dataDir, inPath);
@@ -190,24 +121,23 @@ nexttile(tl); imshow(spectrumImage(G)); title('Spectrum after');
 nexttile(tl); imshow(min(max(g, 0), 1)); title(sprintf('Restored (%.2f dB)', after));
 nexttile(tl);
 refPath = findReference(dataDir, inPath);
-if ~isempty(refPath)
-    imshow(readImageFile(refPath)); title('Reference');
-else
+if isempty(refPath)
     axis off;
+else
+    imshow(readImageFile(refPath)); title('Reference');
 end
 exportgraphics(fig, outFile, 'Resolution', 110);
 close(fig);
 end
 
 function saveCompareFigure(f, list, dataDir, inPath, outFile)
-% One column per compared filter: restored image (top) and mask (bottom).
 K = numel(list);
 [M, N, ~] = size(f);
-tileHeight = round(420 * M / N);   % keep tiles close to the image's aspect ratio
-fig = figure('Visible', 'off', 'Position', [0 0 420 * K 2 * tileHeight + 260], 'Theme', 'light');   % room for 2-line titles
+tileHeight = round(420 * M / N);
+fig = figure('Visible', 'off', 'Position', [0 0 420 * K 2 * tileHeight + 260], 'Theme', 'light');
 tl = tiledlayout(fig, 2, K, 'TileSpacing', 'compact', 'Padding', 'compact');
 [~, inName, ext] = fileparts(inPath);
-heading = repmat({' '}, 1, K);          % image name above the first column only
+heading = repmat({' '}, 1, K);
 heading{1} = [inName ext ': filter comparison'];
 for c = 1:K
     [g, H] = runConfig(f, list(c));
@@ -223,8 +153,6 @@ close(fig);
 end
 
 function showMask(H, titleText)
-% Draw a mask with a thin frame, so its white (pass) area is visible on the
-% white figure background.
 imshow(H);
 axis on;
 set(gca, 'XTick', [], 'YTick', [], 'Box', 'on');
