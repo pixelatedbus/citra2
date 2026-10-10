@@ -86,16 +86,62 @@ Conventions: images are `double` in [0,1]; H(u,v) is centred with DC at
 ## Parts
 
 ### B. Smoothing / blurring
-TODO
+Low-pass filters built with `lowpassH`: ideal `D <= D0`, Gaussian `exp(-D^2 / 2D0^2)` and
+Butterworth `1 / (1 + (D/D0)^2n)`.
+
+- **GUI (tab B):** choose the filter, `D0` and `n` (Butterworth only), then Apply. The tab shows the input, its
+  spectrum, H(u,v), the result and its spectrum. When the image comes from `data/B_.../input/`, it also shows the
+  PSNR of the input and of the result against the reference.
+- **Batch (`run_partB`):** every input with ILPF, GLPF and BLPF for `D0` from 10 to 280. One CSV row per setting,
+  plus a figure per image with a PSNR-vs-`D0` plot and the three filters at the same cutoff.
+- **Finding:** GLPF gives the best PSNR on every input, BLPF is close behind, and ILPF is worst because its
+  sharp cutoff causes ringing. The best `D0` is higher for fine texture (grass) than for smooth scenes (rocket).
 
 ### C. High-pass filtering
-TODO
+High-pass filters built with `highpassH = 1 - lowpassH` (IHPF, GHPF, BHPF). The mean is removed, so the result
+has negative values. `highpassDisplay` shows it as `|g|` normalised (default: black background, bright edges),
+as `|g|`, or rescaled from min to max (keeps the sign).
+
+- **GUI (tab C):** filter, `D0`, `n` and the display mode. The parameter line and the saved file name state the
+  display mode used.
+- **Batch (`run_partC`):** every input with the three filters at `D0` = 10, 30 and 60, saved as a 3×3 grid per
+  image. There are no reference images for part C, so no PSNR.
+- **Finding:** IHPF produces doubled, wavy edges (ringing); GHPF and BHPF give clean single edges. A small `D0`
+  keeps edges and texture, while a large `D0` keeps only the finest detail and noise.
 
 ### D. Brightness increase
 TODO
 
 ### E. Periodic noise restoration
-TODO
+Periodic noise appears as isolated spikes in the centred spectrum. Two reject filters:
+
+- **Notch reject (`notchRejectH`)**: one hole per spike at offset `(du, dv)` with radius `r`. The mirror spike
+  `(-du, -dv)` is removed automatically, offsets may be fractional, and the shape is ideal, Butterworth or
+  Gaussian.
+- **Bandreject (`bandrejectH`)**: a ring of radius `D0` and width `W`, ideal, Butterworth or Gaussian.
+
+How to use them:
+- **GUI (tab E):** pick the filter and shape, then enter the notches in the table (`du`, `dv`, radius) or the ring's
+  `D0` and `W`. The hint shows the spectrum centre, so a spike seen at spectrum pixel `(x, y)` is at
+  `du = y - uc`, `dv = x - vc`. The tab shows the degraded image, the spectrum before, the mask, the spectrum
+  after and the restored image.
+- **Batch (`run_partE`):** the spike positions from the spectrum analysis of each input are documented at the
+  top of the file. It sweeps notch shape × radius, compares radii (brick), fundamental vs harmonics (hubble), and
+  notch vs bandreject (rocket), and saves figures with all five views.
+
+| image | spikes (du, dv) | PSNR input → restored |
+|---|---|---|
+| brick | (15.21, −35.98) | 21.05 → 35.71 dB |
+| grass | (20.43, 25.72) | 20.06 → 31.37 dB |
+| hubble | (0, 38.26), (0, 76.5), (0, 114.8) | 22.39 → 31.00 dB |
+| rocket | (32, 0) | 21.73 → 42.67 dB |
+
+- **Notch beats bandreject:** the notch removes only the noise, while a ring also removes real image frequencies
+  at the same radius (rocket: 42.67 dB with the notch, at best 39.30 dB with a ring).
+- **Radius depends on where the spike falls:** spikes that fall between frequency samples spread into their
+  neighbours and need a radius of about 5; an on-grid spike needs only 1.
+- **Hubble's stripes were clipped** on the dark sky. That clipping creates harmonics and leaves faint stripes
+  that no linear filter can fully remove.
 
 ### F. Motion blur restoration
 TODO
