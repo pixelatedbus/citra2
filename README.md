@@ -37,7 +37,7 @@ Dari folder proyek:
 matlab -r "main"
 ```
 
-Tekan **Load image...**, pilih tab B–F, atur parameter, lalu tekan **Apply**. **Save result...** menyimpan hasil.
+Tekan **Load image...**, pilih tab B-F, atur parameter, lalu tekan **Apply**. **Save result...** menyimpan hasil.
 
 Untuk memproses semua citra uji sekaligus (gambar ke `results/<bagian>/`, parameter dan PSNR ke
 `results/params.csv`):
